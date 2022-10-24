@@ -1,23 +1,68 @@
-require('dotenv').config();
+const URL = require('node:url').URL;
+const dns = require('node:dns');
 const express = require('express');
 const cors = require('cors');
+const bodyParser = require('body-parser');
+const mongoose = require('mongoose');
+
+require('dotenv').config();
+
 const app = express();
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
-// TODO: set up mongo connection using mongoose
-// TODO: set up .gitignore file to make sure that your MONGO_URI is not exposed
+mongoose.connect(
+  process.env.MONGO_URI,
+  { useNewUrlParser: true, useUnifiedTopology: true }
+)
+  .then((res) => console.log('established db connection'))
+  .catch(console.error);
 
-// TODO: define a schema for the urls. This should contain
-// - original url as a string
+const ShortUrlSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  seq: { type: Number, default: 0 }
+})
+
+const counter = mongoose.model('shortUrl', ShortUrlSchema)
+
+const UrlSchema = new mongoose.Schema({
+  original_url: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  short_url: { type: Number }
+});
+
+UrlSchema.pre('save', function(next) {
+  const doc = this;
+  counter.findByIdAndUpdate(
+    { _id: 'entityId'},
+    { $inc: { seq: 1 } },
+    { new: true, upsert: true }
+  )
+    .then((count) => {
+      console.log("...count: "+JSON.stringify(count))
+      doc.short_url = count.seq;
+      next()
+    })
+    .catch((err) => {
+      console.error("counter error: "+err)
+      throw err
+    })
+})
+
+const Model = new mongoose.model('Url', UrlSchema);
+
+
+// TODO: 
 // - we should validate that the url is true using 'dns'
 //   module https://nodejs.org/api/dns.html. `dns.lookup(host, cb)`
-// - we can rely on the models id for the shorturl
 
 app.use(cors());
 
-// TODO: add body parser middleware
+app.use(bodyParser.urlencoded({ extended: false }));
 
 app.use('/public', express.static(`${process.cwd()}/public`));
 
@@ -45,6 +90,39 @@ app.post('/api/shorturl', (req, res) => {
   // Before creating the shorturl, we want to search to see whether this url already
   // exists in our persisted state, and return the previously cached persisted state.
   // Else we create the shorturl (relying on the id of the mongo instance)
+  //
+  try {
+    const url = new URL(req.body.url);
+    dns.lookup(url.host, (err, address, family) => {
+      if (err) {
+        res.send({ error: "invalid url" })
+        return
+      }
+      Model.findOne({ original_url: req.body.url }, (err, shortened) => {
+        if (shortened) {
+          const { original_url, short_url } = shortened;
+          res.send({ original_url, short_url })
+          return
+        }
+
+        const newShortened = new Model({
+          original_url: req.body.url
+        });
+
+        newShortened.save()
+          .then(({ short_url, original_url}) => {
+            res.send({ original_url, short_url })
+          })
+          .catch((err) => {
+            console.log('findOne issue', err)
+            res.send({ error: err })
+          })
+      })
+      
+    }) 
+  } catch (e) {
+    res.send({ error: 'invalid url' })
+  }
 })
 
 app.listen(port, function() {
