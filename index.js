@@ -82,15 +82,22 @@ app.get('/api/shorturl/:shorturl', (req, res) => {
   // if not, send back a response {"error":"No short URL found for the given input"}
   // otherwise this should find the original url and redirect the user
   // to that url
+  console.log({ short_url: req.params.shorturl })
+  Model.findOne({ short_url: req.params.shorturl }, (err, doc) => {
+    if (!doc) {
+      res.status(304).send({ error: "No short URL found for the given input"})
+      return
+    }
+    if (err) {
+      res.status(500).send({ error: err })
+      return
+    }
+    res.writeHead(302, { Location: doc.original_url })
+    res.end()
+  }) 
 })
 
 app.post('/api/shorturl', (req, res) => {
-  // TODO:
-  // here we'll check the body of the request to find the original url.
-  // Before creating the shorturl, we want to search to see whether this url already
-  // exists in our persisted state, and return the previously cached persisted state.
-  // Else we create the shorturl (relying on the id of the mongo instance)
-  //
   try {
     const url = new URL(req.body.url);
     dns.lookup(url.host, (err, address, family) => {
